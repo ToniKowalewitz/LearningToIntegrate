@@ -1,0 +1,169 @@
+// Gmsh project
+//
+// Tested with Gmsh version 4.5.6
+
+SetFactory("OpenCASCADE");
+
+// Script parameters.
+block_c = %s;
+block_w = %s;
+block_h = %s;
+block_a = %s;
+size_at_point = %s;
+domain_size = %s;
+
+// Define points.
+%s
+ele_list() = %s;
+surf_list() = %s;
+pt_list() = Point{:};
+Physical Point("points", 1) = ele_list();
+
+// Connect points by staight lines.
+For ii In {1:#pt_list()-1}
+    Line(ii) = {ii, ii+1};
+EndFor
+Line(#pt_list()) = {#pt_list(), 1};
+Line Loop(1) = {1:#pt_list()};
+
+// Set half-space (surface).
+Plane Surface(1) = {1};
+
+// Add dike (rectangle) and rotate.
+Rectangle(2) = {block_c(0)-block_w/2, block_c(1)-block_h/2, 0, block_w, block_h, 0};
+If (block_a != 0)
+    Rotate{{0, 0, -1}, {block_c(0), block_c(1), block_c(2)}, (block_a * Pi)/180} {Surface{2};}
+EndIf
+
+// Intersect surfaces.
+obj_list() = BooleanFragments{ Surface{2}; Delete;}{ Surface{1};};
+
+// Sanity checks.
+If (#obj_list() > 3)
+   Error('Block cutting surface in more than one point not supported.');
+ElseIf (#obj_list() == 2)
+    If (obj_list(0) == 2 && obj_list(1) == 1)
+        Error('Block lies outside of the halfspace.');
+    EndIf
+EndIf
+
+// Identify parts.
+halfspace_id = obj_list(#obj_list()-1);
+If (#obj_list() > 2)
+	tmp_id() = Surface{:};
+	tmp_id() -= {1, halfspace_id};
+	bb_1() = BoundingBox Surface{tmp_id(0)};
+	bb_2() = BoundingBox Surface{tmp_id(1)};
+	If (bb_1(4) < bb_2(4))
+		dike_id = tmp_id(0);
+		cutof_dike_id = tmp_id(1);
+	Else
+		dike_id = tmp_id(1);
+		cutof_dike_id = tmp_id(0);
+	EndIf
+Else
+	dike_id = obj_list(0);
+EndIf
+Physical Surface("halfspace", 1) = halfspace_id;
+Physical Surface("dike", 2) = dike_id;
+
+// Delete former halfspace but keep point numbering!
+Recursive Delete {Surface{1};}
+
+// If dike intersects halfspace:
+ln_block_list() = Abs(Boundary{Surface{dike_id};});
+ln_hs_list() = Abs(Boundary{Surface{halfspace_id};});
+If (#obj_list() == 3)
+    // Search new points (resulting from intersection) at surface.
+    pt_hs_list() = PointsOf{Surface{halfspace_id};};
+    pt_blockcut_list() = PointsOf{Surface{cutof_dike_id};};
+    For pp In {0:#pt_blockcut_list()-1}
+        For ss In {0:#pt_hs_list()-1}
+            If (pt_blockcut_list(pp) == pt_hs_list(ss))
+                new_surf_pt() += pt_hs_list(ss);
+            EndIf
+        EndFor
+    EndFor
+    // Remove parts of dike outside the halfspace.
+    Recursive Delete {Surface{cutof_dike_id};}
+    // Redefine list of entire surface points.
+    new_surflist() = {new_surf_pt(), surf_list()};
+    // Get all edge elements which are formed of points from new_surflist().
+    test_1 = 0;
+    test_2 = 0;
+    // Search w.r.t. block.
+    For hh In {0:#ln_block_list()-1}
+        cur_pt() = PointsOf{Line{ln_block_list(hh)};};
+        For pp In {0:#new_surflist()-1}
+            If (new_surflist(pp) == cur_pt(0))
+                test_1 = 1;
+            ElseIf (new_surflist(pp) == cur_pt(1))
+                test_2 = 1;
+            EndIf
+        EndFor
+        If (test_1 == 1 && test_2 == 1)
+            surfline_list() += ln_block_list(hh);
+        EndIf
+        test_1 = 0;
+        test_2 = 0;
+    EndFor
+    // Search w.r.t. halfspace.
+    For hh In {0:#ln_hs_list()-1}
+        cur_pt() = PointsOf{Line{ln_hs_list(hh)};};
+        For pp In {0:#new_surflist()-1}
+            If (new_surflist(pp) == cur_pt(0))
+                test_1 = 1;
+            ElseIf (new_surflist(pp) == cur_pt(1))
+                test_2 = 1;
+            EndIf
+        EndFor
+        If (test_1 == 1 && test_2 == 1)
+            surfline_list() += ln_hs_list(hh);
+        EndIf
+        test_1 = 0;
+        test_2 = 0;
+    EndFor
+    Else
+        // Set surface from default points at surface.
+        surfline_list() = {1:#pt_list()-3};
+EndIf
+Physical Line("surface", 1) = surfline_list();
+
+// Set subsurface.
+tmp() = ln_hs_list();
+For hh In {0:#ln_hs_list()-1}
+    For ss In {0:#surfline_list()-1}
+        If (surfline_list(ss) == ln_hs_list(hh))
+            tmp() -= ln_hs_list(hh);
+        EndIf
+    EndFor
+EndFor
+subsurf_list() = tmp();
+For ss In {0:#tmp()-1}
+    For bb In {0:#ln_block_list()-1}
+        If (tmp(ss) == ln_block_list(bb))
+            subsurf_list() -= ln_block_list(bb);
+        EndIf
+    EndFor
+EndFor
+Physical Line("subsurface", 2) = subsurf_list();
+
+// Set mesh parameter.
+Field[1] = Distance;
+Field[1].NodesList = {ele_list()};
+Field[20] = Threshold;
+Field[20].IField = 1;
+Field[20].LcMin = size_at_point;
+Field[20].LcMax = 0.5*domain_size;
+Field[20].DistMin = 2*size_at_point;
+Field[20].DistMax = domain_size;
+Field[100] = Min;
+Field[100].FieldsList = {20};
+Background Field = {100};
+Mesh.CharacteristicLengthFromPoints = 0;
+Mesh.CharacteristicLengthFromCurvature = 0;
+Mesh.CharacteristicLengthExtendFromBoundary = 0;
+
+// Meshing
+Mesh 2;
+%s

@@ -1,0 +1,87 @@
+// Gmsh project
+//
+// Tested with Gmsh version 4.5.6
+
+SetFactory("OpenCASCADE");
+
+// Survey parameter (used for meshing).
+size_at_point = %s;
+domain_size = %s;
+block_w = %s;
+
+// Define points.
+%s
+pt_list() = Point{:};
+Physical Point("points", 1) = pt_list();
+
+// Define domain.
+%s
+
+// Add block.
+%s
+
+// Intersect volumes.
+// If 'object' (Volume{1})  and 'tool' (Volume{2}) are deleted,
+// returned entity (i.e. volumes) list contains:
+// 1. leftover from 'object' (i.e. former Volume{1} including hole)
+// 2. part of 'tool' inside  of 'object
+// 3. part of 'tool' outside of 'object'
+// Note: for 'tool' intersecting more than one surface of 'object',
+//       the above list is extended by entity tags from further parts outside 'object'
+obj_list() = BooleanFragments{ Volume{1}; Delete;}{Volume{2}; Delete;};
+If (#obj_list() > 2)
+    domain_tag = obj_list(0);
+    block_tag = obj_list(1);
+    // Delete cutted part(s) of block, that lie outside the domain
+    For ii In {2:#obj_list()-1}
+        Recursive Delete {Volume{obj_list(ii)};}
+    EndFor
+Else
+    // If no intersection with surfaces happened, the returned entity list contains:
+    // 1. former Volume{2} (i.e. block)
+    // 2. former Volume{1} (i.e. domain)
+    domain_tag = obj_list(1);
+    block_tag = obj_list(0);
+EndIf
+Physical Volume("halfspace", 1) = domain_tag;
+Physical Volume("block", 2) = block_tag;
+
+// Add points to surface / volumes.
+BooleanFragments{Volume{:}; Delete;}{Point{pt_list()}; Delete;}
+
+// Identify domain faces.
+tol = 1e-5;
+domain_bb() = BoundingBox Volume{domain_tag}; // [xmin,ymin,zmin,ymax,xmax,zmax]
+// Get all faces at zmin.
+domain_surf() = Surface In BoundingBox{domain_bb(0), domain_bb(1), domain_bb(5)-tol, domain_bb(3), domain_bb(4), domain_bb(5)+tol};
+// Get all faces at zmax, ymin, ymax, xmin, ymax.
+domain_subsurf() = {};
+domain_subsurf() += Surface In BoundingBox{domain_bb(0), domain_bb(1), domain_bb(2)-tol, domain_bb(3), domain_bb(4), domain_bb(2)+tol};
+domain_subsurf() += Surface In BoundingBox{domain_bb(0)-tol, domain_bb(1), domain_bb(2), domain_bb(0)+tol, domain_bb(4), domain_bb(5)};
+domain_subsurf() += Surface In BoundingBox{domain_bb(3)-tol, domain_bb(1), domain_bb(2), domain_bb(3)+tol, domain_bb(4), domain_bb(5)};
+domain_subsurf() += Surface In BoundingBox{domain_bb(0), domain_bb(1)-tol, domain_bb(2), domain_bb(3), domain_bb(1)+tol, domain_bb(5)};
+domain_subsurf() += Surface In BoundingBox{domain_bb(0), domain_bb(4)-tol, domain_bb(2), domain_bb(3), domain_bb(4)+tol, domain_bb(5)};
+
+// Set physical surfaces.
+Physical Surface("surface", 1) = domain_surf();
+Physical Surface("subsurface", 2) = domain_subsurf();
+
+// Cell sizes at electrode points.
+Field[1] = Distance;
+Field[1].NodesList = {pt_list()};
+Field[10] = Threshold;
+Field[10].IField = 1;
+Field[10].LcMin = size_at_point;
+Field[10].LcMax = 0.5*domain_size;
+Field[10].DistMin = 2*size_at_point;
+Field[10].DistMax = domain_size;
+Field[100] = Min;
+Field[100].FieldsList = {10};
+Background Field = {100};
+Mesh.CharacteristicLengthFromPoints = 0;
+Mesh.CharacteristicLengthFromCurvature = 0;
+Mesh.CharacteristicLengthExtendFromBoundary = 0;
+
+// Meshing
+Mesh 3;
+%s

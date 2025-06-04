@@ -1,0 +1,46 @@
+// Add line entity point and straight line definitions.
+// Note: chronological order of points/lines required!
+pt_id = newp;
+%s
+wire_pt_list() = {};
+For pp In {0:#tmp_aux_pt()-1}
+	// Extrude points to auxilary line, piercing through surface.
+	// From Gmsh documentation 5.1.5: ex_out(0) - top curve, ex_out(1) surface, ex_out(2:3) side curves
+	// From observation: ex_out(0) - top point, ex_out(1) curve
+	ex_out() = Extrude {0, 0, domain_r*2}{Point{tmp_aux_pt(pp)};};
+	// Intersect auxilary line with surface.
+	int_out() = BooleanFragments{Surface{face_1};}{Curve{ex_out(1)};Delete;};
+	tmp_bnd_1() = PointsOf{Curve{int_out(1)};};
+	tmp_bnd_2() = PointsOf{Curve{int_out(2)};};
+	// Find intersection point.
+	wire_pt = {};
+	For ii In {0:#tmp_bnd_1()-1}
+		For jj In {0:#tmp_bnd_2()-1}
+			If (tmp_bnd_1(ii) == tmp_bnd_2(jj))
+				wire_pt = tmp_bnd_2(jj);
+			EndIf
+		EndFor
+	EndFor
+	pt_list() += wire_pt;    // Append global TX/RX list.
+	wire_pt_list() += wire_pt;
+	// Remove obsolete parts.
+	Delete{Surface{int_out(0)};}
+	Delete{Curve{int_out(1), int_out(2)};}
+	Delete{Point{ex_out(0)};}
+	Delete{Point{tmp_bnd_2(#tmp_bnd_2()-1)};}
+EndFor
+// Add line objects.
+l_id = newl;
+For pp In {0:#wire_pt_list()-2}
+	Spline(l_id+pp) = {wire_pt_list(pp), wire_pt_list(pp+1)};
+	line_list() += {l_id+pp}; // Append global line list.
+	wire_line_list() += {l_id+pp};
+EndFor
+If (form_loop == 1)
+	Spline(l_id+pp) = {wire_pt_list(pp), wire_pt_list(0)};
+	line_list() += {l_id+pp}; // Append global line list.
+	wire_line_list() += {l_id+pp};
+EndIf
+// Add to surface.
+Point{wire_pt} In Surface{face_1};
+Curve{wire_line_list()} In Surface{face_1};

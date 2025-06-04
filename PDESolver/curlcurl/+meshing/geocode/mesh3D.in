@@ -1,0 +1,138 @@
+// Gmsh project
+SetFactory("OpenCASCADE");
+
+// Initialize points.
+pt_list() = {};
+topo_pt_list() = {};
+insitu_pt_list() = {};
+pt_tag = 0;
+%s
+%s
+/// Create a spline surface from given points.
+// Express boundary by single spline.
+sl_id = newl;
+Spline(sl_id) = {surf_bnd_pt_list()};
+// Store as curve loop.
+lc_id = newll;
+Curve Loop(lc_id) = {sl_id};
+// Create surface by incorporating topography points to spline surface.
+// From Gmsh documentation: this approach only works for 'Curve Loop' consisting of single line!
+face_1 = news;
+Surface(face_1) = {lc_id} Using Point{topo_pt_list()};
+surf_list() += {face_1};
+// If spline surface extent is smaller than the expected radius of the domain (half-)sphere.
+If (dilate_fac > 0)
+	// FIXME: How to ensure, that threshold 10 will always be enought?
+	dilate_fac = dilate_fac * 10;
+	// Dilate spline curve.
+	tmp_lc_id = newll;
+	tmp_lc_id = Duplicata{Curve{sl_id};};
+	tmp_lc_id = Dilate{{topo_c(0), topo_c(1), topo_c(2)},{dilate_fac, dilate_fac, 1}}{Curve{tmp_lc_id};};
+	// Get surface filling between curves (i.e. enlarge original surface).
+	tmp_wc_id = newl;
+	Wire(tmp_wc_id) = sl_id;
+	Wire(tmp_wc_id+1) = tmp_lc_id;
+	surf_out() = ThruSections{tmp_wc_id, tmp_wc_id+1};
+	face_2 = surf_out();
+	surf_list() += {face_2};
+EndIf
+
+/// Create domain, i.e. volume entity.
+vol_1 = newv;
+Sphere(vol_1) = {domain_c(0), domain_c(1), domain_c(2), domain_r, -Pi/2, Pi/2, 2*Pi};
+// Cut volume (sphere) by spline surface (parts).
+frag_ents() = BooleanFragments{Volume{vol_1}; Delete;}{Surface{surf_list()}; Delete;};
+If (#frag_ents() > 4)
+	Error('Cutting sphere by given surface results in more than the expected number of geometric objects. Try to increase the radius of the sphere.');
+EndIf
+// Remove obsolete entities.
+// FIXME: Entity assignment at boolean operation output not documented!
+// Cutting sphere by surface:
+// 1. (deleting 'object' and 'tool') allocates new volume tags to upper and lower half-sphere.
+//    The latter will receive the lowest tag number.
+tmp_vl() = Volume{:};
+If (#tmp_vl() > 2)
+	Error('Cutting sphere by given surface results in more than the expected number of volumes.');
+EndIf
+tmp_vol = tmp_vl(0);
+vol_1 = tmp_vl(1);
+If (tmp_vl(1) < tmp_vol)
+	tmp_vol = tmp_vl(1);
+	vol_1 = tmp_vl(0);
+EndIf
+// 2. Offcut of surface is stored in the last element of the entity list frag_ents().
+Recursive Delete{Surface{frag_ents(#frag_ents()-1)};}
+// 3. Remaining two volumes share (inner) surface parts.
+tmp_bnd_1() = Abs(Boundary{Volume{vol_1};});
+tmp_bnd_2() = Abs(Boundary{Volume{tmp_vol};});
+surf_list() = {};
+subsurf_list() = tmp_bnd_1();
+For ii In {0:#tmp_bnd_1()-1}
+	For jj In {0:#tmp_bnd_2()-1}
+		If (tmp_bnd_1(ii) == tmp_bnd_2(jj))
+			surf_list() += tmp_bnd_2(jj);
+			subsurf_list() -= tmp_bnd_2(jj);
+		EndIf
+	EndFor
+EndFor
+Recursive Delete{Volume{tmp_vol};}
+// Add insitu points to domain.
+Point{insitu_pt_list()} In Volume{vol_1};
+// Add topography points to (inner) surface.
+If (#surf_list() == 1)
+	// If no inner part was constructed, face_1 entity may not exist anymore.
+	face_1 = surf_list();
+EndIf
+Point{topo_pt_list()} In Surface{face_1};
+// Set physical entities.
+Physical Volume("domain", 1) = vol_1;
+Physical Surface("surface", 1) = surf_list();
+Physical Surface("subsurface", 2) = subsurf_list();
+
+/// Add line entities.
+// Initialize lines.
+line_list() = {};
+%s
+
+/// Meshing.
+// Initialize meshing parameter.
+size_at_point = %s;
+pad = 0.5;
+// Cell sizes at points.
+Field[1] = Distance;
+Field[1].NodesList = {pt_list()};
+Field[10] = Threshold;
+Field[10].IField = 1;
+Field[10].LcMin = size_at_point;
+Field[10].DistMin = 2*size_at_point;
+Field[10].LcMax = pad*domain_r;
+Field[10].DistMax = domain_r;
+// Cell sizes at topography points.
+Field[2] = Distance;
+Field[2].NodesList = {topo_pt_list()};
+Field[20] = Threshold;
+Field[20].IField = 2;
+Field[20].LcMin = 5*size_at_point;
+Field[20].DistMin = 5*size_at_point;
+Field[20].LcMax = pad*domain_r;
+Field[20].DistMax = domain_r;
+// Cell sizes at lines.
+Field[3] = Distance;
+Field[3].EdgesList = {line_list()};
+Field[30] = Threshold;
+Field[30].IField = 3;
+Field[30].LcMin = 2*size_at_point;
+Field[30].DistMin = 4*size_at_point;
+Field[30].LcMax = pad*domain_r;
+Field[30].DistMax = domain_r;
+// Take the min of all constraints.
+Field[100] = Min;
+Field[100].FieldsList = {10, 20, 30};
+Background Field = {100};
+Mesh.CharacteristicLengthFromPoints = 0;
+Mesh.CharacteristicLengthFromCurvature = 0;
+Mesh.CharacteristicLengthExtendFromBoundary = 0;
+
+// Run Gmsh.
+Mesh 3;
+%s

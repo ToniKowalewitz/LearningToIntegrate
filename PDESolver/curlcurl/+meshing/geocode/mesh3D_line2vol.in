@@ -1,0 +1,17 @@
+// Add line entity point and straight line definitions.
+pt_id = newp;
+%s
+l_id = newl;
+For pp In {0:#tmp_aux_pt()-2}
+	Spline(l_id+pp) = {tmp_aux_pt(pp), tmp_aux_pt(pp+1)};
+	line_list() += {l_id+pp}; // Append global line list.
+	wire_line_list() += {l_id+pp};
+EndFor
+If (form_loop == 1)
+	Spline(l_id+pp) = {tmp_aux_pt(pp), tmp_aux_pt(0)};
+	line_list() += {l_id+pp}; // Append global line list.
+	wire_line_list() += {l_id+pp};
+EndIf
+// Add to volume.
+Point{tmp_aux_pt()} In Volume{vol_1};
+Curve{wire_line_list()} In Volume{vol_1};

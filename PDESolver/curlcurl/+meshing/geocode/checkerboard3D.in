@@ -1,0 +1,64 @@
+// Gmsh project created on Thu Apr  9 21:33:12 2020
+SetFactory("OpenCASCADE");
+
+// Add points.
+point_id = newp;
+%s
+// Construct half-sphere (domain) by intersecting sphere with plane.
+domain_r = %s;
+vol_id = newv;
+Sphere(vol_id) = {0, 0, 0, domain_r, -Pi/2, Pi/2, 2*Pi};
+surface_id = news;
+Rectangle(surface_id) = {-domain_r-10, -domain_r-10, 0, 2*domain_r+20, 2*domain_r+20, 0};
+// Intersect.
+frag_ents() = BooleanFragments{ Volume{vol_id}; Delete; }{ Surface{surface_id}; Delete; };
+// Remove obsolete parts.
+Recursive Delete{Volume{frag_ents(0)}; Surface{frag_ents(#frag_ents()-1)};}	// FIXME: id assignment just by hand
+// Set current domain id.
+domain_id() = Volume{:};
+
+// Add blocks.
+block_id = newv;
+%s
+// Intersect.
+If (#blocks() > 0)
+	frag_ents() = BooleanFragments{ Volume{domain_id()}; Delete; }{ Volume{blocks()}; Point{points()}; Delete; };
+	domain_id() = Volume{:};
+	domain_id() -= blocks();
+EndIf
+
+// Set physical entities.
+Physical Point("point", 1) = points();
+Physical Volume("domain", 1) = domain_id();
+For bb In {0:#blocks()-1}
+	Physical Volume(Sprintf("block_", (bb+1)), bb+2) = blocks(bb); 		//FIXME: how to use string identifier here: crashes with using .geo template
+EndFor
+bnd_ents() = Abs(Boundary{Volume{domain_id()};});
+subsurface_id = bnd_ents(0);							// FIXME: id assignment just by hand
+Physical Surface("subsurface", 2) = subsurface_id;
+bb() = BoundingBox Surface{bnd_ents(1)};					// FIXME: id assignment just by hand
+surface_id() = Surface In BoundingBox {bb(0),bb(1),bb(2),bb(3),bb(4),bb(5)};
+Physical Surface("surface", 1) = surface_id();
+
+// Meshing.
+size_at_point = %s;
+// Cell sizes at TX/RX points.
+Field[1] = Distance;
+Field[1].NodesList = {points()};
+Field[10] = Threshold;
+Field[10].IField = 1;
+Field[10].LcMin = size_at_point;
+Field[10].LcMax = 0.5*domain_r;
+Field[10].DistMin = 2*size_at_point;
+Field[10].DistMax = domain_r;
+// Take the min of all constraints.
+Field[100] = Min;
+Field[100].FieldsList = {10};
+Background Field = {100};
+Mesh.CharacteristicLengthFromPoints = 0;
+Mesh.CharacteristicLengthFromCurvature = 0;
+Mesh.CharacteristicLengthExtendFromBoundary = 0;
+
+// Run Gmsh.
+Mesh 3;
+%s

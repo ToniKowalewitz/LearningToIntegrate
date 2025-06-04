@@ -1,0 +1,89 @@
+// Gmsh project
+SetFactory("OpenCASCADE");
+
+// Initialize points.
+topo_pt_list() = {};
+insitu_pt_list() = {};
+pt_id = newp;
+pt_list() = {};
+%s
+
+// Create a piece-wise linear surface wire.
+line_id = newl;
+ln_list() = {};
+For pp In {0:#topo_pt_list()-2}
+	Line(line_id+pp) = {topo_pt_list(pp), topo_pt_list(pp+1)};
+	ln_list() += {line_id+pp};
+EndFor
+
+// Create domain, i.e. face entity.
+fc_id = news;
+%s
+
+// Intersect with surface wire.
+frag_ents() = BooleanFragments{Surface{fc_id}; Delete;}{Curve{ln_list()}; Delete;};
+// Boolean output from observation:
+// 1. Upper half-disc gets new id, Lower half-disc gets new id+1
+// 2. All straight lines, which are not intersected keep their id
+surf() = Surface{:};
+If (#surf() > 2)
+	Error('Cutting disc by given surface results in more than the expected number of faces.');
+EndIf
+Recursive Delete{Surface{surf(0)};}
+// Remove curves that are not part of domain, i.e. cut off wire parts.
+ln_all() = Curve{:};
+// 3. Arc of domain gets opposite sign of the rest of the boundary elements.
+//    Arc of domain gets the highest id in that list.
+ln_bnd() = Abs(Boundary{Surface{surf(1)};});
+ln_trash() = ln_all();
+ln_surf() = {};
+ln_subsurf = 0;
+For lb In {0:#ln_bnd()-1}
+	For la In {0:#ln_all()-1}
+		If (ln_all(la) == ln_bnd(lb))
+			ln_trash() -= {ln_bnd(lb)}; // don't trash occuring lines
+			ln_surf() += {ln_bnd(lb)};  // add to list of surface parts
+		EndIf
+
+	EndFor
+	If (ln_bnd(lb) > ln_subsurf)
+		ln_subsurf = ln_bnd(lb); 	    // update subsurface id
+	EndIf
+EndFor
+Recursive Delete{Curve{ln_trash()};}
+tmp_list() = ln_surf();
+For ls In {0:#tmp_list()-1}
+	If (tmp_list(ls) == ln_subsurf)
+		ln_surf() -= ln_subsurf;	    // remove subsurface from surface list
+	EndIf
+EndFor
+
+// Add insitu points to domain.
+Point{insitu_pt_list()} In Surface{surf(1)};
+Physical Surface("domain", 1) = surf(1);
+Physical Line("surface", 1) = ln_surf();
+Physical Line("subsurface", 2) = ln_subsurf;
+
+/// Meshing.
+// Initialize meshing parameter.
+size_at_point = %s;
+// Cell sizes at points.
+Field[1] = Distance;
+Field[1].NodesList = {pt_list()};
+Field[10] = Threshold;
+Field[10].IField = 1;
+Field[10].LcMin = size_at_point;
+Field[10].DistMin = 2*size_at_point;
+Field[10].LcMax = 0.5*domain_r;
+Field[10].DistMax = domain_r;
+// Take the min of all constraints.
+Field[100] = Min;
+Field[100].FieldsList = {10};
+Background Field = {100};
+Mesh.CharacteristicLengthFromPoints = 0;
+Mesh.CharacteristicLengthFromCurvature = 0;
+Mesh.CharacteristicLengthExtendFromBoundary = 0;
+
+// Run Gmsh.
+Mesh 2;
+%s

@@ -1,0 +1,76 @@
+// Gmsh project created on Thu Apr  9 21:33:12 2020
+SetFactory("OpenCASCADE");
+
+// Construct half-disc (domain).
+domain_r = %s;
+fc_id = news;
+Disk(fc_id) = {0, 0, 0, domain_r};
+point_id = newp;
+Point(point_id+0) = {-1.5*domain_r, 0, 0};
+Point(point_id+1) = { 1.5*domain_r, 0, 0};
+ln_id = newl;
+Line(ln_id) = {point_id+0, point_id+1};
+frag_ents() = BooleanFragments{Surface{fc_id}; Delete;}{Line{ln_id}; Delete;};
+Recursive Delete {Surface{frag_ents(0)}; Line{frag_ents(2), frag_ents(3)};}
+
+domain_id = frag_ents(1);
+tmp_ln() = Line{:};
+surface_id = tmp_ln(0);
+surf_bb() = BoundingBox Line{surface_id};
+subsurface_id = tmp_ln(1);
+
+// Add blocks.
+block_list() = {};
+block_id = news;
+%s
+If (#block_list() > 0)
+	BooleanFragments{Surface{domain_id}; Delete;}{Surface{block_list()}; Delete;}
+EndIf
+
+block_id() = block_list();
+domain_id() = Surface{:};
+domain_id() -= block_id();
+
+// Add Points.
+point_list() = {};
+point_id = newp;
+%s
+If (#block_list() > 0)
+	BooleanFragments{Surface{domain_id}; Delete;}{Point{point_list()}; Delete;}
+EndIf
+
+// Identify boundaries.
+surface_id() = Line In BoundingBox {surf_bb(0), surf_bb(1), surf_bb(2), surf_bb(3), surf_bb(4), surf_bb(5)};
+subsurface_id() = Abs(Boundary{Surface{domain_id()};});
+subsurface_id() -= surface_id();
+subsurface_id() -= Abs(Boundary{Surface{block_list()};});
+
+// Add physical entities.
+Physical Surface("domain", 1) = domain_id();
+For b In {0:#block_id()-1}
+	Physical Surface(Sprintf("block_", (b+1)), b+2) = block_id(b); 	//FIXME: how to use string identifier here: crashes with using .geo template
+EndFor
+Physical Line("surface", 1) = surface_id();
+Physical Line("subsurface", 2) = subsurface_id();
+Physical Point("points", 1) = point_list();
+
+// Meshing.
+size_at_point = %s;
+Field[1] = Distance;
+Field[1].NodesList = {point_list()};
+Field[10] = Threshold;
+Field[10].IField = 1;
+Field[10].LcMin = size_at_point;
+Field[10].LcMax = 0.5*domain_r;
+Field[10].DistMin = 2*size_at_point;
+Field[10].DistMax = domain_r;
+Field[100] = Min;
+Field[100].FieldsList = {10};
+Background Field = {100};
+Mesh.CharacteristicLengthFromPoints = 0;
+Mesh.CharacteristicLengthFromCurvature = 0;
+Mesh.CharacteristicLengthExtendFromBoundary = 0;
+
+// Run Gmnsh.
+Mesh 2;
+%s
